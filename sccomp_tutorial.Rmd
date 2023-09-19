@@ -1,0 +1,102 @@
+---
+title: "sccomp tutorial"
+author: "Yifan Duan"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+# Setup the environment
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r environment, warning=FALSE}
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("sccomp")
+
+library(sccomp)
+library(tidyverse)
+
+data("seurat_obj")
+data("counts_obj")
+
+# newer version of Matrix package doesn't work with Seurat
+# somehow this line fixes the problem
+Csparse_validate = "CsparseMatrix_validate"
+```
+
+
+# Haber data
+```{r haber data, message=FALSE}
+haber_counts <- read_csv("./data/haber_counts.csv")
+
+# converting it to long form
+haber_counts_long <- haber_counts |> 
+  pivot_longer("Endocrine":"Tuft", names_to = "cell_group", values_to = "count")
+
+# generating the necessary columns
+haber_counts_long$type <- gsub("_(.*)", "", haber_counts_long$Mouse)
+haber_counts_long$type <- as.factor(haber_counts_long$type)
+
+haber_counts_long$count <- as.integer(haber_counts_long$count)
+
+haber_counts_long$cell_group <- as.factor(haber_counts_long$cell_group)
+
+haber_counts_long <- haber_counts_long |> rename(sample = Mouse)
+haber_counts_long$sample <- as.factor(haber_counts_long$sample)
+
+haber_counts_long
+```
+
+
+# Running the model
+```{r model}
+res <- haber_counts_long |>
+  sccomp_glm( 
+    formula_composition = ~ type,
+    # formula_variability = ~ type, if you want to have variability analysis
+    .sample = sample,
+    .cell_group = cell_group,
+    .count = count, # only add this line for count object
+    bimodal_mean_variability_association = TRUE,
+    cores = 1 
+  )
+```
+Of the output table, the estimate columns start with the prefix `c_` indicate `composition`, or with `v_` indicate `variability` (when formula_variability is set).
+
+
+```{r visualization}
+plots = plot_summary(res)
+
+pdf("figures/boxplot.pdf")
+plots$boxplot
+dev.off()
+
+pdf("figures/credible_interval.pdf")
+plots$credible_intervals_1D
+dev.off()
+```
+
+```{r diagnostics}
+# how to read this?
+res %>% attr("fit") %>% rstan::traceplot("beta[2,1]")
+```
+
+```{r poisson}
+cell_type_list <- levels(haber_counts_long$cell_group)
+
+glm_summaries <- lapply(cell_type_list, function(cell) {
+  subset_data <- haber_counts_long[haber_counts_long$cell_group == cell, ]
+  model <- glm(formula = count ~ type, family = "poisson", data = subset_data)
+  
+  # Create a list with two components: cell type and model summary
+  list(cell_type = cell, summary = summary(model))
+})
+
+# Name list elements by cell type for easier retrieval
+names(glm_summaries) <- cell_type_list
+
+glm_summaries
+```
+
