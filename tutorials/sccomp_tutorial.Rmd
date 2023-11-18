@@ -29,7 +29,7 @@ Csparse_validate = "CsparseMatrix_validate"
 
 # Haber data
 ```{r haber data, message=FALSE}
-haber_counts <- read_csv("../data/haber_counts.csv")
+haber_counts <- read_csv("./data/haber_counts.csv")
 
 # converting it to long form
 haber_counts_long <- haber_counts |> 
