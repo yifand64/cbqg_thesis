@@ -11,9 +11,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r environment, warning=FALSE}
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# BiocManager::install("sccomp")
+#if (!require("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+#BiocManager::install("sccomp")
 
 library(sccomp)
 library(tidyverse)
@@ -29,7 +29,7 @@ Csparse_validate = "CsparseMatrix_validate"
 
 # Haber data
 ```{r haber data, message=FALSE}
-haber_counts <- read_csv("./data/haber_counts.csv")
+haber_counts <- read_csv("../data/haber_counts.csv")
 
 # converting it to long form
 haber_counts_long <- haber_counts |> 
@@ -52,30 +52,35 @@ haber_counts_long
 
 # Running the model
 ```{r model}
-res <- haber_counts_long |>
+res <- seurat_obj |>
   sccomp_glm( 
     formula_composition = ~ type,
-    # formula_variability = ~ type, if you want to have variability analysis
+    formula_variability = ~ type, #if you want to have variability analysis
     .sample = sample,
     .cell_group = cell_group,
-    .count = count, # only add this line for count object
-    bimodal_mean_variability_association = TRUE,
-    cores = 1 
+    #.count = count, # only add this line for count object
+    bimodal_mean_variability_association = T,
+    #cores = 1 
   )
 ```
+
+```{r}
+res
+```
+
 Of the output table, the estimate columns start with the prefix `c_` indicate `composition`, or with `v_` indicate `variability` (when formula_variability is set).
 
 
 ```{r visualization}
-plots = plot_summary(res)
+plots = plot_summary(res, significance_threshold = 0.05)
 
-pdf("figures/boxplot.pdf")
+#pdf("figures/boxplot.pdf")
 plots$boxplot
-dev.off()
+#dev.off()
 
-pdf("figures/credible_interval.pdf")
+#pdf("figures/credible_interval.pdf")
 plots$credible_intervals_1D
-dev.off()
+#dev.off()
 ```
 
 ```{r diagnostics}
@@ -88,7 +93,7 @@ cell_type_list <- levels(haber_counts_long$cell_group)
 
 glm_summaries <- lapply(cell_type_list, function(cell) {
   subset_data <- haber_counts_long[haber_counts_long$cell_group == cell, ]
-  model <- glm(formula = count ~ type, family = "poisson", data = subset_data)
+  model <- glm(formula = count ~ type, family = poisson(link = "log"), data = subset_data)
   
   # Create a list with two components: cell type and model summary
   list(cell_type = cell, summary = summary(model))

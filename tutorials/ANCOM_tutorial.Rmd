@@ -1,0 +1,90 @@
+---
+title: "ANCOMBC tutorial"
+author: "Yifan Duan"
+date: "2023-10-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Lin, H., Peddada, S.D. Analysis of compositions of microbiomes with bias correction. Nat Commun 11, 3514 (2020). https://doi.org/10.1038/s41467-020-17041-7
+
+```{r installing packages}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("ANCOMBC")
+library(ANCOMBC)
+library(tidyverse)
+library(TreeSummarizedExperiment)
+```
+```{r loading data and processing}
+haber_counts <- read_csv("../data/haber_counts.csv")
+
+# converting it to long form
+haber_counts_long <- haber_counts |> 
+  pivot_longer("Endocrine":"Tuft", names_to = "cell_group", values_to = "count")
+
+# generating the necessary columns
+haber_counts_long$type <- gsub("_(.*)", "", haber_counts_long$Mouse)
+haber_counts_long$type <- as.factor(haber_counts_long$type)
+
+haber_counts_long$count <- as.integer(haber_counts_long$count)
+
+haber_counts_long$cell_group <- as.factor(haber_counts_long$cell_group)
+
+haber_counts_long <- haber_counts_long |> dplyr::rename(sample = Mouse)
+haber_counts_long$sample <- as.factor(haber_counts_long$sample)
+
+haber_counts_long
+```
+
+```{r rna data}
+haber_counts_long
+
+haber_ancombc <- haber_counts_long |> select(-type) |>
+  spread(key = sample, value = count) |> column_to_rownames("cell_group")
+
+col_data <- data.frame(celltype = gsub("_(.*)", "", colnames(haber_ancombc)),
+                       row.names = colnames(haber_ancombc),
+                       stringsAsFactors = T)
+#row_data <- data.frame(Species = rownames(haber_ancombc),
+#                       row.names = rownames(haber_ancombc),
+#                       stringsAsFactors = F)
+
+# need to get this step to work
+haber_tse <- TreeSummarizedExperiment(assays = list(counts = haber_ancombc),
+                                     colData = col_data)
+colData(haber_tse)
+assays(haber_tse)[[1]]
+```
+
+```{r}
+ancombc(
+  data = haber_tse,
+  assay_name = "counts",
+  formula = "celltype",
+  p_adj_method = "holm",
+  prv_cut = 0,
+  lib_cut = 100,
+  group = "celltype",
+  struc_zero = FALSE,
+  neg_lb = FALSE,
+  tol = 1e-05,
+  max_iter = 100,
+  conserve = FALSE,
+  alpha = 0.05,
+  global = T,
+  n_cl = 1,
+  verbose = FALSE
+)
+
+```
+
+```{r}
+res <- out$res
+q_val <- out$q_data
+```
+
