@@ -1,0 +1,71 @@
+---
+title: "downsample"
+author: "Yifan Duan"
+date: "2024-03-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+count_df_wide <- fread("../covid_wide.csv")
+count_df_wide$condition <- as.factor(count_df_wide$condition)
+count_df_wide$sample <- as.factor(count_df_wide$sample)
+
+
+downsample <- function(data, n) {
+  
+  # Filter samples from the control condition
+  control_samples <- data %>%
+    filter(condition == "Control") %>%
+    sample_n(n)
+  
+  # Filter samples from the non-control condition
+  non_control_samples <- data %>%
+    filter(condition == "COVID19") %>%
+    sample_n(n)
+  
+  # Combine the samples
+  selected_samples <- rbind(control_samples, non_control_samples)
+  
+  selected_samples <- selected_samples |> 
+    pivot_longer(cols = -c(condition, sample), names_to = "celltype", values_to = "count")
+  
+  selected_samples$celltype <- as.factor(selected_samples$celltype)
+  
+  # View the selected samples
+  return(selected_samples)
+}
+
+set.seed(123)
+bootstrap_downsampled3_results <- replicate(10, downsample(count_df_wide, 3), simplify = FALSE)
+
+bootstrap_downsampled5_results <- replicate(10, downsample(count_df_wide, 5), simplify = FALSE)
+
+bootstrap_downsampled10_results <- replicate(10, downsample(count_df_wide, 10), simplify = FALSE)
+```
+
+
+```{r}
+# rbind nsample 3, 5, 10
+downsample3_result <- map_dfr(bootstrap_downsampled3_results, ~ apply_functions(.x, refcat = "B"), .id = "bootstrap_iteration")
+downsample3_result$sample_size <- "3"
+downsample3_result$significant <- as.factor(ifelse(downsample3_result$lower_CI < 0 & downsample3_result$upper_CI > 0, "No", "Yes"))
+
+write.csv(downsample3_result, file = "downsample3_result.csv", row.names = F)
+
+downsample5_result <- map_dfr(bootstrap_downsampled5_results, ~ apply_functions(.x, refcat = "B"), .id = "bootstrap_iteration")
+downsample5_result$sample_size <- "5"
+downsample5_result$significant <- as.factor(ifelse(downsample5_result$lower_CI < 0 & downsample5_result$upper_CI > 0, "No", "Yes"))
+write.csv(downsample5_result, file = "downsample5_result.csv", row.names = F)
+
+
+downsample10_result <- map_dfr(bootstrap_downsampled10_results, ~ apply_functions(.x, refcat = "B"), .id = "bootstrap_iteration")
+downsample10_result$sample_size <- "10"
+downsample10_result$significant <- as.factor(ifelse(downsample10_result$lower_CI < 0 & downsample10_result$upper_CI > 0, "No", "Yes"))
+write.csv(downsample10_result, file = "downsample10_result.csv", row.names = F)
+
+```

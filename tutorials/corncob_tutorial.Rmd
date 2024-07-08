@@ -1,0 +1,111 @@
+---
+title: "immune_data_wrangling"
+author: "Yifan Duan"
+date: "2024-01-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# as list for table celltype vs cond_sample
+library(tidyverse)
+library(stringr)
+
+# install.packages("remotes")
+# remotes::install_github("statdivlab/corncob")
+library(corncob)
+library(magrittr)
+data(soil_phylo_sample)
+data(soil_phylo_otu)
+data(soil_phylo_taxa)
+```
+
+
+```{r}
+head(soil_phylo_sample)
+soil_phylo_otu[1:5, 1:5]
+soil_phylo_taxa[1:3, ]
+
+head(data)
+pro_data <- cbind(sample_data, 
+                  W = unlist(data["Proteobacteria", ]),
+                  M = colSums(data))
+```
+
+
+```{r}
+haber_counts
+
+haber_counts_metadata <- haber_counts %>%
+  mutate(condition = as.factor(case_when(
+    grepl("^Control", Mouse) ~ "Control",
+    grepl("^Salm", Mouse) ~ "Salm",
+    grepl("^H.poly.Day10", Mouse) ~ "H.poly.Day10",
+    grepl("^H.poly.Day3", Mouse) ~ "H.poly.Day3"
+  ))) |> select(Mouse, condition)
+
+# flipping the row and column for input
+haber_counts_flipped <- as.data.frame(t(haber_counts))
+new_col_names <- as.character(haber_counts_flipped[1, ])
+haber_counts_flipped <- haber_counts_flipped[-1, ]
+colnames(haber_counts_flipped) <- new_col_names
+haber_counts_flipped <- haber_counts_flipped %>%
+  mutate_all(as.numeric)
+
+
+haber_counts_data <- cbind(haber_counts_metadata, 
+                  W = unlist(haber_counts_flipped["Enterocyte",]),
+                  M = colSums(haber_counts_flipped))
+```
+
+
+```{r}
+corncob <- bbdml(formula = cbind(W, M - W) ~ 1,
+             phi.formula = ~ 1,
+             data = haber_counts_data)
+plot(corncob, B = 50)
+plot(corncob, total = TRUE, B = 50)
+plot(corncob, total = TRUE, color = "condition", B = 50)
+plot(corncob, color = "condition", B = 50)
+```
+
+
+```{r}
+corncob_da <- bbdml(formula = cbind(W, M - W) ~ condition,
+             phi.formula = ~ condition,
+             data = haber_counts_data)
+
+plot(corncob_da, color = "condition", total = TRUE, B = 50)
+plot(corncob_da, color = "condition", B = 50)
+
+```
+
+```{r}
+# to test whether covariate is needed
+lrtest(mod_null = corncob, mod = corncob_da)
+summary(corncob_da)
+```
+
+
+```{r}
+da_analysis <- differentialTest(formula = ~ condition,
+                                 phi.formula = ~ condition,
+                                 formula_null = ~ 1,
+                                 phi.formula_null = ~ condition,
+                                 test = "Wald", boot = FALSE,
+                                 data = haber_counts_flipped,
+                                 sample_data = haber_counts_data,
+                                 taxa_are_rows = TRUE, 
+                                 fdr_cutoff = 0.05)
+```
+
+
+```{r}
+da_analysis$p_fdr
+da_analysis$significant_taxa
+```
+

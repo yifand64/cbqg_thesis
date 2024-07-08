@@ -1,0 +1,178 @@
+---
+title: "power"
+author: "Yifan Duan"
+date: "2024-02-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(purrr)
+
+# Define a function to apply the deletion of 5% of Mono cells in Non-control condition
+percent_deletion <- function(bootstrap_result, portion_deleted) {
+  # Get indices of rows where condition is "Non-control" and celltype is "Mono"
+  indices <- which(bootstrap_result$condition == "Non-control" & bootstrap_result$celltype == "Mono")
+  
+  # Calculate number of cells to delete (5% of Mono cells)
+  cells_to_delete <- round(portion_deleted * bootstrap_result$count[indices])
+  
+  # Create a copy of the bootstrap result
+  modified_bootstrap_result <- bootstrap_result
+  
+  # Modify the count column based on the calculated cells to delete
+  modified_bootstrap_result$count[indices] <- bootstrap_result$count[indices] - cells_to_delete
+  
+  # Return the modified bootstrap result
+  return(modified_bootstrap_result)
+}
+
+
+percent_addition <- function(bootstrap_result, portion_added) {
+  # Get indices of rows where condition is "Non-control" and celltype is "Mono"
+  indices <- which(bootstrap_result$condition == "Non-control" & bootstrap_result$celltype == "DC")
+  
+  # Calculate number of cells to delete (5% of DC cells)
+  cells_to_add <- round(portion_added * bootstrap_result$count[indices])
+  
+  # Create a copy of the bootstrap result
+  modified_bootstrap_result <- bootstrap_result
+  
+  # Modify the count column based on the calculated cells to delete]
+  modified_bootstrap_result$count[indices] <- bootstrap_result$count[indices] + cells_to_add
+  
+  # Return the modified bootstrap result
+  return(modified_bootstrap_result)
+}
+
+percent_transient <- function(bootstrap_result, transient_portion){
+  # from a to b
+  index_a <- which(bootstrap_result$condition == "Non-control" & bootstrap_result$celltype == "NK")
+  index_b <- which(bootstrap_result$condition == "Non-control" & bootstrap_result$celltype == "B")
+  cells_to_change <- round(transient_portion * bootstrap_result$count[index_a])
+  
+    # Create a copy of the bootstrap result
+  modified_bootstrap_result <- bootstrap_result
+  
+  # adding count from index a (1st celltype) to index b (2nd celltype)
+  modified_bootstrap_result$count[index_a] <- bootstrap_result$count[index_a] - cells_to_change
+  modified_bootstrap_result$count[index_b] <- bootstrap_result$count[index_b] + cells_to_change
+  
+  return(modified_bootstrap_result)
+}
+```
+
+
+```{r}
+# 10%, 30%, 50%
+bootstrap_deleted_0.1 <- map(bootstrap_results, ~ percent_deletion(.x, 0.1))
+
+# Apply functions to each dataframe in bootstrap_deleted
+power_results_deletion_0.1 <- map_dfr(bootstrap_deleted_0.1, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_deletion_0.1$percent_deleted <- 10
+power_results_deletion_0.1$significant <- as.factor(ifelse(power_results_deletion_0.1$lower_CI < 0 & power_results_deletion_0.1$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_deletion_0.1, file = "power_deletion_result_0.1.csv", row.names = F)
+
+####
+
+bootstrap_deleted_0.3 <- map(bootstrap_results, ~ percent_deletion(.x, 0.3))
+
+# Apply functions to each dataframe in bootstrap_deleted
+power_results_deletion_0.3 <- map_dfr(bootstrap_deleted_0.3, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_deletion_0.3$percent_deleted <- 30
+power_results_deletion_0.3$significant <- as.factor(ifelse(power_results_deletion_0.3$lower_CI < 0 & power_results_deletion_0.3$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_deletion_0.3, file = "power_deletion_result_0.3.csv", row.names = F)
+
+####
+
+bootstrap_deleted_0.5 <- map(bootstrap_results, ~ percent_deletion(.x, 0.5))
+
+# Apply functions to each dataframe in bootstrap_deleted
+power_results_deletion_0.5 <- map_dfr(bootstrap_deleted_0.5, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_deletion_0.5$percent_deleted <- 50
+power_results_deletion_0.5$significant <- as.factor(ifelse(power_results_deletion_0.5$lower_CI < 0 & power_results_deletion_0.5$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_deletion_0.5, file = "power_deletion_result_0.5.csv", row.names = F)
+```
+
+
+```{r}
+bootstrap_added_0.5 <- map(bootstrap_results, ~ percent_addition(.x, 0.5))
+
+power_results_addition_0.5 <- map_dfr(bootstrap_added_0.5, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_addition_0.5$percent_added <- 50
+power_results_addition_0.5$significant <- as.factor(ifelse(power_results_addition_0.5$lower_CI < 0 & power_results_addition_0.5$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_addition_0.5, file = "power_results_addition_0.5.csv", row.names = F)
+
+####
+
+bootstrap_added_0.75 <- map(bootstrap_results, ~ percent_addition(.x, 0.75))
+
+power_results_addition_0.75 <- map_dfr(bootstrap_added_0.75, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_addition_0.75$percent_added <- 75
+power_results_addition_0.75$significant <- as.factor(ifelse(power_results_addition_0.75$lower_CI < 0 & power_results_addition_0.75$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_addition_0.75, file = "power_results_addition_0.75.csv", row.names = F)
+
+####
+
+bootstrap_added_1 <- map(bootstrap_results, ~ percent_addition(.x, 1))
+
+power_results_addition_1 <- map_dfr(bootstrap_added_1, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_addition_1$percent_added <- 100
+power_results_addition_1$significant <- as.factor(ifelse(power_results_addition_1$lower_CI < 0 & power_results_addition_1$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_addition_1, file = "power_results_addition_1.csv", row.names = F)
+
+```
+
+
+```{r}
+bootstrap_transient_0.1 <- map(bootstrap_results, ~ percent_transient(.x, 0.1))
+
+power_results_transient_0.1 <- map_dfr(bootstrap_transient_0.1, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_transient_0.1$percent_changed <- 10
+power_results_transient_0.1$significant <- as.factor(ifelse(power_results_transient_0.1$lower_CI < 0 & power_results_transient_0.1$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_transient_0.1, file = "power_results_transient_0.1.csv", row.names = F)
+
+####
+
+bootstrap_transient_0.3 <- map(bootstrap_results, ~ percent_transient(.x, 0.3))
+
+power_results_transient_0.3 <- map_dfr(bootstrap_transient_0.3, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_transient_0.3$percent_changed <- 30
+power_results_transient_0.3$significant <- as.factor(ifelse(power_results_transient_0.3$lower_CI < 0 & power_results_transient_0.3$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_transient_0.3, file = "power_results_transient_0.3.csv", row.names = F)
+
+####
+
+bootstrap_transient_0.5 <- map(bootstrap_results, ~ percent_transient(.x, 0.5))
+
+power_results_transient_0.5 <- map_dfr(bootstrap_transient_0.5, ~ apply_functions(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+power_results_transient_0.5$percent_changed <- 50
+power_results_transient_0.5$significant <- as.factor(ifelse(power_results_transient_0.5$lower_CI < 0 & power_results_transient_0.5$upper_CI > 0, "No", "Yes"))
+
+write.csv(power_results_transient_0.5, file = "power_results_transient_0.5.csv", row.names = F)
+
+```
+

@@ -1,0 +1,227 @@
+---
+title: "Untitled"
+author: "Yifan Duan"
+date: "2024-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(cowplot)
+library(ggpubr)
+
+getwd()
+fp_result <- read.csv("../benchmark/fp_result.csv")
+fp_result <- fp_result |> 
+  mutate_at(vars(bootstrap_iteration, celltype, method, significant), as.factor)
+fp_result <- fp_result |> filter(method != "t-test")
+
+
+addition_result <- read.csv("../benchmark/power_addition_result.csv")
+addition_result <- addition_result |> 
+  mutate_at(vars(percent_added, celltype, method, significant, bootstrap_iteration), as.factor)
+addition_result <- addition_result |> filter(method != "t-test")
+
+
+deletion_result <- read.csv("../benchmark/power_deletion_result.csv")
+deletion_result <- deletion_result |> 
+  mutate_at(vars(percent_deleted, celltype, method, significant, bootstrap_iteration), as.factor)
+deletion_result <- deletion_result |> filter(method != "t-test")
+
+
+transient_result <- read.csv("../benchmark/power_transient_result.csv")
+transient_result$percent_changed <- as.factor(transient_result$percent_changed)
+transient_result <- transient_result |> 
+  mutate_at(vars(percent_changed, celltype, method, significant, bootstrap_iteration), as.factor)
+transient_result <- transient_result |> filter(method != "t-test")
+
+downsample_result <- read.csv("../benchmark/downsample_result.csv")
+downsample_result <- downsample_result |> filter(method != "t-test")
+downsample_result <- downsample_result |> 
+  mutate_at(vars(sample_size, celltype, method, significant, bootstrap_iteration), as.factor)
+downsample_result$celltype <- gsub(" Cells$", "", downsample_result$celltype)
+downsample_result$celltype <- gsub("Cells$", "", downsample_result$celltype)
+```
+
+
+```{r}
+fp_summary <- fp_result |>
+  group_by(method) |>
+  summarise(fp = sum(significant == "Yes"), 
+            tn = sum(significant == "No"),
+            fpr = (fp / (fp + tn)),
+            n_total = n()) |> dplyr::arrange(fpr)
+# FPR = FP / FP + TN
+
+fp_summary
+```
+```{r}
+# Initialize an empty list to store test results
+prop_test_results <- list()
+
+# Iterate over each row of the dataset
+for (i in 1:nrow(fp_summary)) {
+  # Perform proportion test for the current method's false positive rate
+  prop_test_results[[i]] <- prop.test(fp_summary$fp[i], fp_summary$n_total[i], p = 0.05)
+}
+
+# Print the results
+for (i in 1:length(prop_test_results)) {
+  print(paste("Method:", fp_summary$method[i]))
+  fp_summary$fpr_lower[i] <- prop_test_results[[i]]$conf.int[1]
+  fp_summary$fpr_upper[i] <- prop_test_results[[i]]$conf.int[2]
+}
+
+#pdf("fpr.pdf")
+ggplot(fp_summary, aes(x = reorder(method, fpr), y = fpr)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_errorbar(aes(ymin = fpr_lower, ymax = fpr_upper), width = 0.4) +
+  geom_hline(yintercept = 0.05, linetype = "dashed") + # Adding a dashed horizontal line at y = 0.05
+  labs(x = "Method",
+       y = "False Positive Rate") +
+  theme_cowplot() +
+  scale_fill_manual(values = palette, breaks = rev(levels(deletion_result$method))) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+#dev.off()
+```
+
+
+```{r}
+# power = 1 - type II error = 1 - fn / (tp + fn)
+deletion_summary <- deletion_result |>
+  group_by(method, percent_deleted) |>
+  filter(celltype == "Mono") |>
+  summarise(tp = sum(significant == "Yes"),
+            fn = sum(significant == "No"),
+            type2error = (fn / (tp+fn)),
+            power = 1 - type2error,
+            n_total = n()) |> arrange(percent_deleted, desc(power))
+```
+
+```{r}
+# Initialize an empty list to store test results
+prop_test_results <- list()
+
+# Iterate over each row of the dataset
+for (i in 1:nrow(deletion_summary)) {
+  # Perform proportion test for the current method's power  
+  prop_test_results[[i]] <- prop.test(deletion_summary$tp[i], deletion_summary$n_total[i], p = 0.05)
+}
+
+# Print the results
+for (i in 1:length(prop_test_results)) {
+  print(paste("Method:", deletion_summary$method[i]))
+  deletion_summary$power_lower[i] <- prop_test_results[[i]]$conf.int[1]
+  deletion_summary$power_upper[i] <- prop_test_results[[i]]$conf.int[2]
+}
+
+deletion_summary$percent_deleted <- as.numeric(as.character(deletion_summary$percent_deleted))
+
+# Plot the data with geom_ribbon
+pdf("Deletion_power.pdf", width = 8, height = 6)
+ggplot(deletion_summary, aes(x = percent_deleted, y = power)) +
+  #geom_ribbon(aes(ymin = power_lower, ymax = power_upper, fill = method), alpha = 0.5) +
+  geom_point(aes(colour = method)) +
+  geom_line(aes(group = method, colour = method)) +
+  labs(x = "Percent Deleted", y = "Power") +
+  scale_color_manual(name = "", values = palette) + 
+  theme_cowplot()
+dev.off()
+```
+
+
+```{r}
+addition_summary <- addition_result |>
+  group_by(method, percent_added) |>
+  filter(celltype == "DC") |>
+  summarise(tp = sum(significant == "Yes"),
+            fn = sum(significant == "No"),
+            type2error = (fn / (tp+fn)),
+            power = 1 - type2error,
+            n_total = n()) |> arrange(percent_added, desc(power))
+
+# Initialize an empty list to store test results
+prop_test_results <- list()
+
+# Iterate over each row of the dataset
+for (i in 1:nrow(addition_summary)) {
+  # Perform proportion test for the current method's power  
+  prop_test_results[[i]] <- prop.test(addition_summary$tp[i], addition_summary$n_total[i], p = 0.05)
+}
+
+# Print the results
+for (i in 1:length(prop_test_results)) {
+  print(paste("Method:", addition_summary$method[i]))
+  addition_summary$power_lower[i] <- prop_test_results[[i]]$conf.int[1]
+  addition_summary$power_upper[i] <- prop_test_results[[i]]$conf.int[2]
+}
+
+pdf("Addition_power.pdf", width = 8, height = 6)
+addition_summary |> ggplot(aes(x = as.double(as.character(addition_summary$percent_added)), y = power)) +
+  geom_point(aes(color = method)) +
+  #geom_ribbon(aes(ymin = power_lower, ymax = power_upper, fill = method), alpha = 0.5) +
+  geom_line(aes(group = method, colour = method)) +
+  labs(x = "Percent Added", y = "Power") +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot()
+dev.off()
+```
+
+
+```{r}
+transient_summary <- transient_result |>
+  filter(celltype %in% c("NK", "B")) |>
+  group_by(method, celltype, percent_changed) |>
+  summarise(tp = sum(significant == "Yes"),
+            fn = sum(significant == "No"),
+            type2error = (fn / (tp+fn)),
+            power = 1 - type2error,
+            n_total = n()) |> arrange(desc(power), celltype)
+
+# Initialize an empty list to store test results
+prop_test_results <- list()
+
+# Iterate over each row of the dataset
+for (i in 1:nrow(transient_summary)) {
+  # Perform proportion test for the current method's power  
+  prop_test_results[[i]] <- prop.test(transient_summary$tp[i], transient_summary$n_total[i], p = 0.05)
+}
+
+# Print the results
+for (i in 1:length(prop_test_results)) {
+  print(paste("Method:", transient_summary$method[i]))
+  transient_summary$power_lower[i] <- prop_test_results[[i]]$conf.int[1]
+  transient_summary$power_upper[i] <- prop_test_results[[i]]$conf.int[2]
+}
+
+# Plot the data with geom_ribbon
+pdf("Transient_power.pdf", width = 8, height = 6)
+transient_summary |> 
+  ggplot(aes(x = as.double(as.character(percent_changed)), y = power)) +
+  geom_point(aes(color = method)) +
+  geom_line(aes(group = method, colour = method)) +
+  labs(x = "Percent Changed", y = "Power") +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) + 
+  facet_wrap(~celltype) +
+  theme_cowplot()
+dev.off()
+```
+
+
+```{r}
+downsample_summary <- downsample_result |> 
+  dplyr::filter(celltype %in% c("Secretory", "Ciliated")) |> 
+  group_by(method, sample_size) |> 
+  summarise(num_sig = sum(significant == "Yes"),
+            prop_sig = num_sig / 60) |> # 20 = 2 celltype * 10 iteration
+  arrange(sample_size, desc(prop_sig))
+
+```

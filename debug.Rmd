@@ -1,0 +1,56 @@
+---
+title: "debug_yifan"
+author: "Yifan Duan"
+date: "2024-05-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(metafor)
+library(cowplot)
+library(ggpubr)
+
+library(RColorBrewer)
+
+# Define the number of methods and choose an appropriate ColorBrewer palette
+palette <- brewer.pal(length(unique(fp_result$method)), "Dark2")
+
+# load the data
+addition_result <- read.csv("../benchmark/power_addition_result.csv")
+addition_result <- addition_result |> filter(method != "t-test" & method != "wilcoxon")
+addition_result <- addition_result |> 
+  mutate_at(vars(percent_added, celltype, method, significant, bootstrap_iteration), as.factor)
+```
+
+
+```{r}
+# visualizing all of the CI
+addition_result |> filter(celltype == "DC") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.5))) +
+  geom_errorbarh(position = position_jitter(height = 0.2), height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  facet_wrap(~ percent_added) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+# you can see DR have almost all of the CI crossing 0
+```
+
+
+```{r}
+# calculating the standard error assuming normal distribution
+addition_result$se <- (addition_result$upper_CI - addition_result$lower_CI) / (2 * qnorm(0.975))
+
+# only DC cells are being added
+# DM regression for 50 and 75 percent_added has 0 true positive
+subset_data <- addition_result |> filter(method == "dirichlet-multinomial" & celltype == "DC" & 
+                            percent_added == 50) # you can vary this by 50, 75, 100
+
+model <- metafor::rma(yi = estimate, sei = se, data = subset_data)
+```
+

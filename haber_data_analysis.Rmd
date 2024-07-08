@@ -1,0 +1,511 @@
+---
+title: "all_methods_haber_data"
+author: "Yifan Duan"
+date: "2023-11-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r NB}
+library(MASS)
+
+get_nb_ci <- function(count_df) {
+  cell_type_list <- levels(count_df$celltype)
+  
+  nb_summaries <- lapply(cell_type_list, function(cell) {
+    subset_data <- count_df[count_df$celltype == cell, ]
+    model <- glm.nb(formula = count ~ condition, data = subset_data)
+    
+    # Create a data frame with cell type and model summary
+    summary_df <- data.frame(
+      celltype = cell,
+      estimate = model$coefficients[2],
+      lower_CI = confint(model)[2, 1],
+      upper_CI = confint(model)[2, 2],
+      method = as.factor("negative binomial")
+    )
+    return(summary_df)
+  })
+  
+  # Combine the list of data frames into a single data frame
+  nb_summaries_df <- do.call(rbind, nb_summaries)
+  
+  return(nb_summaries_df)
+}
+
+# Example usage:
+#nb_summaries_df <- generate_nb_summaries(count_df)
+#print(nb_summaries_df)
+
+```
+
+
+```{r clr + rlm}
+library(MASS)
+get_rlm_ci <- function(count_df) {
+  cell_type_list <- levels(count_df$celltype)
+  
+  rlm_summaries <- lapply(cell_type_list, function(cell) {
+    subset_data <- count_df[count_df$celltype == cell, ]
+    subset_data <- subset_data |> 
+      dplyr::mutate(geom_mean = exp(mean(log(count), na.rm = TRUE)), 
+                    clr_Count = log(count / geom_mean))
+
+    model <- rlm(formula = clr_Count ~ condition, data = subset_data)
+    
+    # Create a data frame with cell type and model summary
+    summary_df <- data.frame(
+      celltype = cell,
+      estimate = model$coefficients[2],
+      lower_CI = confint.default(object = model, level = 0.95)[2, 1],
+      upper_CI = confint.default(object = model, level = 0.95)[2, 2],
+      method = as.factor("clr + rlm")
+    )
+    return(summary_df)
+  })
+  
+  # Combine the list of data frames into a single data frame
+  rlm_summaries_df <- do.call(rbind, rlm_summaries)
+  
+  return(rlm_summaries_df)
+}
+
+#get_rlm_ci(data)
+```
+
+
+```{r clr + t-test}
+get_clr_ci <- function(count_df) {
+  cell_type_list <- levels(count_df$celltype)
+  
+  clr_summaries <- lapply(cell_type_list, function(cell) {
+    # Subset the data for the current cell type
+    subset_data <- count_df[count_df$celltype == cell, ]
+    
+    # Calculate the geometric mean for the subset data
+    subset_data <- subset_data |>
+      dplyr::mutate(geom_mean = exp(mean(log(count), na.rm = TRUE)),
+                    clr_Count = log(count / geom_mean))
+    
+    # Perform t-test
+    t_test_result <- t.test(clr_Count ~ condition, data = subset_data)
+    
+    # Create a data frame with cell type and t-test summary
+    summary_df <- data.frame(
+      celltype = cell,
+      estimate = t_test_result$estimate[2] - t_test_result$estimate[1],
+      # to match the direction
+      lower_CI = -t_test_result$conf.int[2],
+      upper_CI = -t_test_result$conf.int[1],
+      method = as.factor("clr + t-test")
+    )
+    return(summary_df)
+  })
+  
+  # Combine the list of data frames into a single data frame
+  clr_summaries_df <- do.call(rbind, clr_summaries)
+  
+  return(clr_summaries_df)
+}
+
+# Example usage:
+#clr_summaries_df <- generate_clr_summaries(count_df)
+#print(clr_summaries_df)
+
+```
+
+
+```{r}
+get_ttest_ci <- function(count_df) {
+  cell_type_list <- levels(count_df$celltype)
+  
+  ttest_summaries <- lapply(cell_type_list, function(cell) {
+    # Subset the data for the current cell type
+    subset_data <- count_df[count_df$celltype == cell, ]
+    
+    # Perform t-test
+    t_test_result <- t.test(count ~ condition, data = subset_data)
+    
+    # Create a data frame with cell type and t-test summary
+    summary_df <- data.frame(
+      celltype = cell,
+      estimate = t_test_result$estimate[2] - t_test_result$estimate[1],
+      # to match the direction
+      lower_CI = -t_test_result$conf.int[1],
+      upper_CI = -t_test_result$conf.int[2],
+      method = as.factor("t-test")
+    )
+    return(summary_df)
+  })
+  
+  # Combine the list of data frames into a single data frame
+  ttest_summaries_df <- do.call(rbind, ttest_summaries)
+  
+  return(ttest_summaries_df)
+}
+```
+
+
+```{r propeller}
+library(speckle)
+library(limma)
+
+#count_df <- bootstrap_results[[1]]
+
+#propeller_data <- count_df |>
+#  slice(rep(1:n(), count)) |>
+#  dplyr::select(-count)
+
+#res_propel <- propeller(clusters = propeller_data$celltype, 
+#                        sample = propeller_data$sample, 
+#                        group = propeller_data$condition)
+
+#res_propel
+get_propeller_ci <- function(count_df){
+  propeller_data <- count_df |> slice(rep(1:n(), count)) |> dplyr::select(-count)
+  
+  prop.list <- getTransformedProps(propeller_data$celltype, propeller_data$sample, "logit")
+
+  baseline.props <- table(propeller_data$celltype)/sum(table(propeller_data$celltype))
+  group.coll <- table(propeller_data$sample, propeller_data$condition)
+  
+  design <- matrix(as.integer(group.coll != 0), ncol=ncol(group.coll))
+  colnames(design) <- colnames(group.coll)
+
+  contrasts <- c(-1, 1)
+  
+  prop.trans <- prop.list$TransformedProps
+  prop <- prop.list$Proportions
+  
+  fit <- lmFit(prop.trans, design)
+  fit.cont <- contrasts.fit(fit, contrasts=contrasts)
+  fit.cont <- eBayes(fit.cont, robust=T, trend=F)
+  
+  # dividing the CI to get estimate because this is linear model (CHECKED already!)
+  propeller_summaries <- topTable(fit.cont, number = 50, confint = TRUE) |>
+    dplyr::select(lower_CI = CI.L, upper_CI = CI.R) |>
+    mutate(estimate = (lower_CI + upper_CI) / 2) |> rownames_to_column("celltype") |>
+    mutate(method = "propeller")  
+  
+  return(propeller_summaries)
+}
+
+#get_propeller_ci(count_df)
+```
+
+
+
+```{r sccomp}
+library(sccomp)
+
+get_sccomp_ci <- function(count_df) {
+  count_df$count <- as.integer(count_df$count)
+  
+  res <- count_df |>
+    sccomp_estimate(
+      formula_composition = ~ condition,
+      .sample = sample,
+      .cell_group = celltype,
+      .count = count,
+      bimodal_mean_variability_association = TRUE,
+      cores = 1)
+  
+  sccomp_summaries_df <- res |>
+    filter(!is.na(factor)) |>
+    dplyr::select(celltype, estimate = c_effect, lower_CI = c_lower, upper_CI = c_upper) |>
+    mutate(method = "sccomp") |> as.data.frame()
+  
+  return(sccomp_summaries_df)
+}
+
+# Example usage:
+#sccomp_summaries_df <- get_sccomp_ci(count_df)
+#print(sccomp_summaries_df)
+```
+
+
+```{r corncob}
+library(corncob)
+
+get_corncob_ci <- function(count_df) {
+  count_df_wide <- as.data.frame(count_df) |> 
+    pivot_wider(names_from = celltype, values_from = count)
+  
+  # Prepare metadata dataframe
+  corncob_metadata <- as.data.frame(count_df_wide |> dplyr::select(c(condition, sample)))
+  rownames(corncob_metadata) <- count_df_wide$sample
+  
+  # Prepare data dataframe
+  corncob_data <- as.data.frame(count_df_wide |> dplyr::select(-c(condition, sample)))
+  rownames(corncob_data) <- count_df_wide$sample
+  corncob_data <- t(corncob_data)
+  
+  # Perform differential abundance analysis
+  da_analysis <- differentialTest(formula = ~ condition,
+                                  phi.formula = ~ 1,
+                                  formula_null = ~ 1,
+                                  phi.formula_null = ~ 1,
+                                  test = "Wald", boot = FALSE,
+                                  data = corncob_data,
+                                  sample_data = corncob_metadata,
+                                  taxa_are_rows = TRUE, 
+                                  fdr_cutoff = 0.05,
+                                  robust = T,
+                                  allow_noninteger = T)
+  
+  # Initialize an empty list to store confidence intervals for all models
+  all_confidence_intervals <- list()
+  
+  # Loop through each model
+  for (i in 1:length(da_analysis$all_models)) {
+    model <- da_analysis$all_models[[i]]
+    
+    # Coefficients and standard errors for abundance
+    abundance_coef <- coef(model)[2, 1]  #  coefficients
+    abundance_std_err <- coef(model)[2, 2]  #  standard errors
+
+    # Degrees of freedom (assuming normal distribution)
+    df <- nrow(corncob_data) - length(unique(corncob_metadata$condition))
+    
+    # Calculate margin of error
+    margin_of_error <- qt(0.975, df) * abundance_std_err
+    
+    # Calculate confidence intervals
+    lower_ci <- abundance_coef - margin_of_error
+    upper_ci <- abundance_coef + margin_of_error
+    
+    # Combine lower and upper confidence intervals into a data frame
+    ci_df <- data.frame(
+      estimate = abundance_coef,
+      lower_CI = lower_ci,
+      upper_CI = upper_ci,
+      method = as.factor("corncob")
+    )
+    
+    # Store confidence intervals for this model in the list
+    all_confidence_intervals[[i]] <- ci_df
+  }
+  
+  # Combine confidence intervals for all models into a single data frame
+  corncob_ci_df <- do.call(rbind, all_confidence_intervals)
+  corncob_ci_df <- cbind(celltype = rownames(corncob_data),  corncob_ci_df)
+  
+  return(corncob_ci_df)
+}
+
+# Example usage:
+#corncob_ci_df <- generate_corncob_summaries(count_df)
+#print(corncob_ci_df)
+
+```
+
+
+```{r}
+library(stringr)
+library(DirichletReg)
+library(brms)
+
+library(pheatmap)
+  
+#pheatmap(dirich_data$cellCounts)
+
+get_dirichlet_multinomial_ci <- function(count_df, refcat) {
+  count_df_wide <- as.data.frame(count_df) |> 
+    pivot_wider(names_from = celltype, values_from = count)
+  
+  dirich_data <- count_df_wide
+  dirich_data$cellCounts <- DR_data(dirich_data |> dplyr::select(-c(condition, sample)))
+  
+  fit_bayes <- brm(cellCounts ~ condition, dirich_data, 
+                   dirichlet(refcat = as.character(refcat)), cores = 1, chains = 4)
+  rv <- fixef(fit_bayes, summary = TRUE, probs = c(0.025, 0.975)) |> data.frame()
+  
+  rv$cell <- rownames(rv)
+  rownames(rv) <- NULL
+  rv <- rv |> filter(!grepl("_Intercept", rv$cell))
+  rv$cell <- gsub("mu", "", rv$cell)
+  rv$contrast <- str_split_fixed(rv$cell, "_", 2)[, 2]
+  rv$cell <- str_split_fixed(rv$cell, "_", 2)[, 1]
+  rv <- rv |> mutate(sig_label = case_when(
+      sign(Q2.5) == sign(Q97.5) ~ "PI_95",
+      TRUE ~ "NS"
+  ))
+
+  ci_df <- data.frame(
+    celltype = rv$cell,
+    estimate = rv$Estimate,
+    lower_CI = rv$Q2.5,
+    upper_CI = rv$Q97.5,
+    method = as.factor("dirichlet-multinomial")
+  )
+  
+  return(ci_df)
+}
+
+# Example usage:
+# ci_df <- get_dirichlet_multinomial_ci(count_df, "T")
+
+```
+
+
+```{r}
+get_wilcoxon_ci <- function(count_df) {
+  cell_type_list <- levels(count_df$celltype)
+  
+  summary_df <- count_df %>%
+  group_by(sample) %>%
+  mutate(total_count = sum(count)) %>%
+  mutate(percentage = (count / total_count) * 100)
+  
+  wilcoxon_summaries <- lapply(cell_type_list, function(cell) {
+    subset_data <- summary_df[summary_df$celltype == cell, ]
+    model <- wilcox.test(percentage ~ condition, data = subset_data, conf.int = TRUE)
+    
+    # Create a data frame with cell type and model summary
+    summary_df <- data.frame(
+      celltype = cell,
+      estimate = as.numeric(model$estimate),
+      upper_CI = model$conf.int[1],
+      lower_CI = model$conf.int[2],
+      method = as.factor("wilcoxon")
+    )
+    return(summary_df)
+  })
+  
+  # Combine the list of data frames into a single data frame
+  wilcoxon_summaries_df <- do.call(rbind, wilcoxon_summaries)
+  
+  return(wilcoxon_summaries_df)
+}
+```
+
+
+```{r}
+apply_functions <- function(data, refcat) {
+  # Initialize a list to store results and runtimes
+  results_with_runtime <- list()
+  
+  # get_nb_ci
+  start_time_nb <- Sys.time()
+  nb_ci_result <- get_nb_ci(data)
+  end_time_nb <- Sys.time()
+  runtime_nb <- end_time_nb - start_time_nb
+  nb_ci_result$runtime <- runtime_nb
+  results_with_runtime[["get_nb_ci"]] <- nb_ci_result
+  
+  # get_rlm_ci
+  start_time_rlm <- Sys.time()
+  rlm_ci_result <- get_rlm_ci(data)
+  end_time_rlm <- Sys.time()
+  runtime_rlm <- end_time_rlm - start_time_rlm
+  rlm_ci_result$runtime <- runtime_rlm
+  results_with_runtime[["get_rlm_ci"]] <- rlm_ci_result
+  
+  # get_clr_ci
+  start_time_clr <- Sys.time()
+  clr_ci_result <- get_clr_ci(data)
+  end_time_clr <- Sys.time()
+  runtime_clr <- end_time_clr - start_time_clr
+  clr_ci_result$runtime <- runtime_clr
+  results_with_runtime[["get_clr_ci"]] <- clr_ci_result
+  
+  # get_sccomp_ci
+  start_time_sccomp <- Sys.time()
+  sccomp_ci_result <- get_sccomp_ci(data)
+  end_time_sccomp <- Sys.time()
+  runtime_sccomp <- end_time_sccomp - start_time_sccomp
+  sccomp_ci_result$runtime <- runtime_sccomp
+  results_with_runtime[["get_sccomp_ci"]] <- sccomp_ci_result
+  
+  # get_corncob_ci
+  start_time_corncob <- Sys.time()
+  corncob_ci_result <- get_corncob_ci(data)
+  end_time_corncob <- Sys.time()
+  runtime_corncob <- end_time_corncob - start_time_corncob
+  corncob_ci_result$runtime <- runtime_corncob
+  results_with_runtime[["get_corncob_ci"]] <- corncob_ci_result
+  
+  # get_propeller_ci
+  start_time_propeller <- Sys.time()
+  propeller_ci_result <- get_propeller_ci(data)
+  end_time_propeller <- Sys.time()
+  runtime_propeller <- end_time_propeller - start_time_propeller
+  propeller_ci_result$runtime <- runtime_propeller
+  results_with_runtime[["get_propeller_ci"]] <- propeller_ci_result
+  
+  # get_dirichlet_multinomial_ci
+  start_time_dirichlet <- Sys.time()
+  dirichlet_ci_result <- get_dirichlet_multinomial_ci(data, refcat = refcat)
+  end_time_dirichlet <- Sys.time()
+  runtime_dirichlet <- end_time_dirichlet - start_time_dirichlet
+  dirichlet_ci_result$runtime <- runtime_dirichlet
+  results_with_runtime[["get_dirichlet_multinomial_ci"]] <- dirichlet_ci_result
+
+  # Combine all results into a single dataframe
+  all_summaries <- do.call(rbind, results_with_runtime)
+  row.names(all_summaries) <- NULL
+
+  return(all_summaries)
+}
+
+```
+
+
+```{r}
+apply_functions_fast <- function(data, refcat) {
+  # Initialize a list to store results and runtimes
+  results_with_runtime <- list()
+  
+  # get_nb_ci
+  start_time_nb <- Sys.time()
+  nb_ci_result <- get_nb_ci(data)
+  end_time_nb <- Sys.time()
+  runtime_nb <- end_time_nb - start_time_nb
+  nb_ci_result$runtime <- runtime_nb
+  results_with_runtime[["get_nb_ci"]] <- nb_ci_result
+  
+  # get_rlm_ci
+  start_time_rlm <- Sys.time()
+  rlm_ci_result <- get_rlm_ci(data)
+  end_time_rlm <- Sys.time()
+  runtime_rlm <- end_time_rlm - start_time_rlm
+  rlm_ci_result$runtime <- runtime_rlm
+  results_with_runtime[["get_rlm_ci"]] <- rlm_ci_result
+  
+  # get_clr_ci
+  start_time_clr <- Sys.time()
+  clr_ci_result <- get_clr_ci(data)
+  end_time_clr <- Sys.time()
+  runtime_clr <- end_time_clr - start_time_clr
+  clr_ci_result$runtime <- runtime_clr
+  results_with_runtime[["get_clr_ci"]] <- clr_ci_result
+
+  # get_corncob_ci
+  start_time_corncob <- Sys.time()
+  corncob_ci_result <- get_corncob_ci(data)
+  end_time_corncob <- Sys.time()
+  runtime_corncob <- end_time_corncob - start_time_corncob
+  corncob_ci_result$runtime <- runtime_corncob
+  results_with_runtime[["get_corncob_ci"]] <- corncob_ci_result
+  
+  # get_propeller_ci
+  start_time_propeller <- Sys.time()
+  propeller_ci_result <- get_propeller_ci(data)
+  end_time_propeller <- Sys.time()
+  runtime_propeller <- end_time_propeller - start_time_propeller
+  propeller_ci_result$runtime <- runtime_propeller
+  results_with_runtime[["get_propeller_ci"]] <- propeller_ci_result
+
+  # Combine all results into a single dataframe
+  all_summaries <- do.call(rbind, results_with_runtime)
+  row.names(all_summaries) <- NULL
+
+  return(all_summaries)
+}
+
+```
+

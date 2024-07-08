@@ -1,0 +1,92 @@
+---
+title: "false_positive"
+author: "Yifan Duan"
+date: "2024-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readr)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(tibble)
+
+count_df_wide <- fread("../immune_df_ctrl_wide.csv")
+count_df_ctrl_wide <- count_df_wide |> dplyr::filter(condition == "Control")
+
+# Define a function to shuffle and assign conditions (from earlier)
+shuffle_and_assign <- function(data) {
+  # Shuffle the index
+  shuffled_indices <- sample(nrow(data))
+  data <- data[shuffled_indices, ]
+  
+  data$condition <- as.character(data$condition)
+  
+  # Split the data into control and non-control based on shuffled indices
+  midpoint <- ceiling(length(data$condition) / 2)
+  data$condition[1:midpoint] <- "Control"
+  data$condition[(midpoint + 1):length(data$condition)] <- "Non-control"
+  
+  data$condition <- as.factor(data$condition)
+  data$sample <- as.factor(data$sample)
+  
+  # Pivot the data back to long format
+  data <- data |> 
+    pivot_longer(cols = -c(condition, sample), names_to = "celltype", values_to = "count")
+  
+  data$celltype <- as.factor(data$celltype)
+  
+  return(data)
+}
+```
+
+
+```{r}
+set.seed(123)
+#scCODA
+bootstrap_results <- replicate(10, shuffle_and_assign(count_df_ctrl_wide), simplify = FALSE)
+
+false_positive_result <- map_dfr(bootstrap_results, ~ apply_functions_fast(.x, refcat = "T"), .id = "bootstrap_iteration")
+
+false_positive_result$significant <- as.factor(ifelse(false_positive_result$lower_CI < 0 & false_positive_result$upper_CI > 0, "No", "Yes"))
+
+write.csv(false_positive_result, file = "fp_result_test.csv", row.names = F)
+```
+
+```{r}
+bootstrap_transient_0.1[[5]]$percent_deleted <- 10
+bootstrap_transient_0.3[[5]]$percent_deleted <- 30
+bootstrap_transient_0.5[[5]]$percent_deleted <- 50
+
+deletion_change_df <- rbind(bootstrap_transient_0.1[[5]], 
+                            bootstrap_transient_0.3[[5]], 
+                            bootstrap_transient_0.5[[5]])
+
+
+
+cond_sum <- deletion_change_df %>%
+  group_by(condition, percent_deleted) %>%
+  summarise(total_count = sum(count)) |> ungroup()
+
+deletion_change_df <- deletion_change_df %>%
+  group_by(condition, celltype, percent_deleted) %>%
+  summarise(cond_count = sum(count)) |> left_join(cond_sum, by = c("condition", "percent_deleted")) %>%
+  mutate(proportion = cond_count / total_count)
+
+
+
+deletion_change_df |> ggplot(aes(x = celltype, y = proportion, fill = condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  facet_wrap(~ percent_deleted) +
+  theme(legend.position = "bottom") + theme_cowplot() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+

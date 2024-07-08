@@ -1,0 +1,615 @@
+---
+title: "data visualization"
+author: "Yifan Duan"
+date: "2024-03-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# load data
+library(cowplot)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+
+getwd()
+fp_result <- read.csv("../benchmark/fp_result.csv")
+fp_result <- fp_result |> filter(method != "t-test" & method != "wilcoxon")
+fp_result <- fp_result |> 
+  mutate_at(vars(bootstrap_iteration, celltype, method, significant), as.factor)
+
+
+addition_result <- read.csv("../benchmark/power_addition_result.csv")
+addition_result <- addition_result |> filter(method != "t-test" & method != "wilcoxon")
+addition_result <- addition_result |> 
+  mutate_at(vars(percent_added, celltype, method, significant, bootstrap_iteration), as.factor)
+
+
+deletion_result <- read.csv("../benchmark/power_deletion_result.csv")
+deletion_result <- deletion_result |> filter(method != "t-test" & method != "wilcoxon")
+deletion_result <- deletion_result |> 
+  mutate_at(vars(percent_deleted, celltype, method, significant, bootstrap_iteration), as.factor)
+
+
+transient_result <- read.csv("../benchmark/power_transient_result.csv")
+transient_result$percent_changed <- as.factor(transient_result$percent_changed)
+transient_result <- transient_result |> filter(method != "t-test" & method != "wilcoxon")
+transient_result <- transient_result |> 
+  mutate_at(vars(percent_changed, celltype, method, significant, bootstrap_iteration), as.factor)
+
+
+covid_result <- read.csv("../benchmark/covid_result.csv")
+covid_result <- covid_result |> filter(method != "t-test" & method != "wilcoxon")
+covid_result <- covid_result |> 
+  mutate_at(vars(celltype, method, significant), as.factor)
+covid_result$celltype <- gsub(" Cells$", "", covid_result$celltype)
+covid_result$celltype <- gsub("Cells$", "", covid_result$celltype)
+
+
+downsample_result <- read.csv("../benchmark/downsample_result.csv")
+downsample_result <- downsample_result |> filter(method != "t-test" & method != "wilcoxon")
+downsample_result <- downsample_result |> 
+  mutate_at(vars(sample_size, celltype, method, significant, bootstrap_iteration), as.factor)
+downsample_result$celltype <- gsub(" Cells$", "", downsample_result$celltype)
+downsample_result$celltype <- gsub("Cells$", "", downsample_result$celltype)
+```
+
+
+```{r}
+# distribution of celltype in immune data
+library(speckle)
+count_df_wide <- read.csv("../immune_df_ctrl_wide.csv")
+count_df <- count_df_wide |> 
+  pivot_longer(cols = -c(condition, sample), names_to = "celltype", values_to = "count")
+
+propeller_data <- count_df |>
+  slice(rep(1:n(), count)) |>
+  dplyr::select(-count)
+
+#pdf("../figures/immune_composition.#pdf")
+plotCellTypeProps(clusters=propeller_data$celltype, sample=propeller_data$sample) +
+  theme_cowplot() + theme(legend.position = "top", axis.text.x = element_text(angle = 90, hjust = 1)) +
+  guides(fill = guide_legend(title = NULL, nrow = 1))  # This line removes the legend title
+#dev.off()  # Close the ##pdf #device
+
+# distribution of celltype in covid data
+count_df_wide <- read.csv("../covid_wide.csv")
+count_df <- count_df_wide |> 
+  pivot_longer(cols = -c(condition, sample), names_to = "celltype", values_to = "count")
+
+propeller_data <- count_df |>
+  slice(rep(1:n(), count)) |>
+  dplyr::select(-count)
+
+#pdf("../figures/covid_composition.#pdf", width = 8, height = 8)
+plotCellTypeProps(clusters=propeller_data$celltype, sample=propeller_data$sample) +
+  theme_cowplot() + theme(legend.position = "top", axis.text.x = element_text(angle = 90, hjust = 1))  +
+  guides(fill = guide_legend(title = NULL))  # This line removes the legend title
+#dev.off()
+```
+
+
+```{r colour setting}
+library(RColorBrewer)
+
+# Define the number of methods and choose an appropriate ColorBrewer palette
+palette <- brewer.pal(length(unique(fp_result$method)), "Dark2")
+```
+
+
+```{r}
+# FPR calculation
+fp_summary <- fp_result |>
+  group_by(method) |>
+  summarise(percentage_significant = mean(significant == "Yes") * 100,
+            FPR = sum(significant == "Yes") / sum(significant == "No") * 100,
+            n_sig = sum(significant == "Yes"), 
+            n_non_sig = sum(significant == "No"),
+            n_total = n()) |> dplyr::arrange(FPR)
+
+# this line reorders the methods by their FPR
+# fp_result$method <- factor(fp_result$method, levels = rev(fp_summary$method))
+# reorders the celltype from abundance (most to least)
+fp_result$celltype <- factor(fp_result$celltype, levels = c("T", "Mono", "NK", "B", "Megakaryocyte", "DC"))
+
+pdf("FP_allCI.pdf")
+fp_result |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.2))) +
+  geom_errorbarh(position = position_jitter(height = 0.2), height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+dev.off()
+
+# heatmap
+fp_summary <- fp_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes"))
+
+#pdf("FP_heatmap_celltype.#pdf")
+fp_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes")) |>
+  ggplot(aes(x = celltype, y = method, fill = num_significant_hits)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "brown1") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(x = "Cell type", y = "Method", fill = "Number of significant hits") +
+  coord_fixed() + theme(legend.position = "top", axis.text.x = element_text(angle = 90))
+#dev.off()
+
+pdf("FP_celltype_estimate.pdf")
+ggplot(fp_result, aes(x = celltype, y = estimate, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Method",
+       y = "Estimate") +
+  theme_cowplot() +
+  scale_fill_manual(values = palette) + 
+  guides(fill = guide_legend(title = NULL, nrow = 2)) +
+  theme(legend.position = "top", axis.text.x = element_text(angle = 45, hjust = 1))
+dev.off()
+
+pdf("FP_runtime.pdf")
+ggplot(fp_result, aes(x = method, y = runtime, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Method", y = "Runtime (s)") +
+  scale_fill_manual(values = palette) +
+  theme_cowplot() + coord_flip() +
+  theme(legend.position = "none")
+dev.off()
+
+fp_summary
+```
+
+
+
+```{r}
+# power (TP / TP+FN)
+p <- deletion_result |> filter(celltype == "Mono") |> group_by(method, percent_deleted) |>
+  summarise(n_sig = sum(significant == "Yes"))
+
+fn <- deletion_result |> filter(celltype == "Mono") |> group_by(method, percent_deleted) |>
+  summarise(n_sig = sum(significant == "No"))
+
+power_deletion <- as.matrix(p$n_sig / (p$n_sig + fn$n_sig) * 100)
+row.names(power_deletion) <- paste0(p$method, p$percent_deleted)
+
+# rank by significant hits in mono
+# by celltype
+deletion_summary <- deletion_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes"))
+
+# rank by relative change
+deletion_rank <- deletion_summary %>%
+  filter(celltype == "Mono") %>% 
+  group_by(method) %>%
+  summarise(total_significant_hits = sum(num_significant_hits)) %>%
+  arrange(desc(total_significant_hits))
+
+#deletion_result$method <- factor(deletion_result$method, levels = rev(deletion_rank$method))
+#deletion_summary$method <- factor(deletion_summary$method, levels = deletion_rank$method)
+
+# non-aggregated CI for monocyte
+##pdf("Power_deletion_allCI.##pdf")
+deletion_result |> filter(celltype == "Mono") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.5))) +
+  geom_errorbarh(position = position_jitter(height = 0.2), height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  facet_wrap(~ percent_deleted) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+##dev.off()
+
+# order the celltype by abundance
+deletion_result$celltype <- factor(deletion_result$celltype, levels = c("T", "Mono", "NK", "B", "Megakaryocyte", "DC"))
+
+# by method only, we need the by celltype to break the gradient legends
+#pdf("Deletion_heatmap_celltype.#pdf")
+deletion_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes")) |>
+  ggplot(aes(x = celltype, y = method, fill = num_significant_hits)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "brown1", breaks = c(0, max(deletion_summary$num_significant_hits))) +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(x = "Cell type", y = "Method", fill = "Number of significant hits") +
+  coord_fixed() + theme(legend.position = "top", axis.text.x = element_text(angle = 90))
+#dev.off()
+
+deletion_summary$is_Mono <- ifelse(deletion_summary$celltype == "Mono", "Mono", "Others")
+#pdf("Deletion_offtarget.#pdf")
+ggplot(deletion_summary, aes(x = method, y = num_significant_hits, fill = is_Mono)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Method", y = "Number of Significant Hits", fill = "Cell Type") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#dev.off()
+
+pdf("Deletion_estimate.pdf")
+deletion_result |> filter(celltype == "Mono") |> 
+  ggplot(aes(x = percent_deleted, y = estimate, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Effect estimate", y = "Percent deleted") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = palette) + 
+  theme_cowplot()
+dev.off()
+```
+
+```{r}
+# rank by significant hits in DC
+# by celltype
+addition_summary <- addition_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes"))
+
+# rank by relative change
+addition_rank <- addition_summary %>%
+  filter(celltype == "DC") %>% 
+  group_by(method) %>%
+  summarise(total_significant_hits = sum(num_significant_hits)) %>%
+  arrange(desc(total_significant_hits))
+
+# non-aggregated CI for monocyte
+##pdf("Power_addition_allCI.##pdf")
+addition_result |> filter(celltype == "DC") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.5))) +
+  geom_errorbarh(position = position_jitter(height = 0.2), height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  facet_wrap(~ percent_added) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+##dev.off()
+
+# order the celltype by abundance
+addition_result$celltype <- factor(addition_result$celltype, levels = c("T", "Mono", "NK", "B", "Megakaryocyte", "DC"))
+
+# by method only, we need the by celltype to break the gradient legends
+#pdf("Addition_heatmap_celltype.#pdf")
+addition_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes")) |>
+  ggplot(aes(x = celltype, y = method, fill = num_significant_hits)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "brown1", breaks = c(0, max(addition_summary$num_significant_hits))) +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(x = "Cell type", y = "Method", fill = "Number of significant hits") +
+  coord_fixed() + theme(legend.position = "top", axis.text.x = element_text(angle = 90))
+#dev.off()
+
+addition_summary$is_DC <- ifelse(addition_summary$celltype == "DC", "DC", "Others")
+#pdf("Addition_offtarget.#pdf")
+ggplot(addition_summary, aes(x = method, y = num_significant_hits, fill = is_DC)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Method", y = "Number of Significant Hits", fill = "Cell Type") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#dev.off()
+
+pdf("Addition_estimate.pdf")
+addition_result |> filter(celltype == "DC") |> 
+  ggplot(aes(x = percent_added, y = estimate, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Effect estimate", y = "Percent added") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  scale_fill_manual(values = palette) + 
+  theme_cowplot()
+dev.off()
+```
+
+
+```{r transient nk to b}
+count_df_wide <- read.csv("../immune_df_ctrl_wide.csv")
+ratio_nk_b <- count_df_wide |> select(NK, B) |> mutate(ratio = NK / B)
+##pdf("Transient_ratio.#pdf")
+ratio_nk_b |> ggplot(aes(y = "", x = ratio)) + geom_boxplot() + theme_cowplot() +
+    labs(y = NULL, x = "Ratio (NK/B)")
+##dev.off()
+
+transient_summary <- transient_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes"))
+
+# rank by relative change
+transient_rank <- transient_summary %>%
+  filter(celltype %in% c("NK", "B")) %>% 
+  group_by(method) %>%
+  summarise(total_significant_hits = sum(num_significant_hits)) %>%
+  arrange(desc(total_significant_hits))
+
+transient_result$method <- factor(transient_result$method, levels = rev(transient_rank$method))
+transient_summary$method <- factor(transient_summary$method, levels = transient_rank$method)
+
+# non-aggregated CIs
+##pdf("Power_transient_allCI.##pdf", width = 6, height = 10)
+transient_result |> filter(celltype %in% c("NK", "B")) |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.5))) +
+  geom_errorbarh(position = position_jitter(height = 0.2), height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  facet_wrap(~ percent_changed + celltype, ncol = 2) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+##dev.off()
+
+# order the celltype by abundance
+transient_result$celltype <- factor(transient_result$celltype, levels = c("T", "Mono", "NK", "B", "Megakaryocyte", "DC"))
+
+# by method only, we need the by celltype to break the gradient legends
+#pdf("Transient_heatmap_celltype.#pdf")
+transient_result |>
+  group_by(method, celltype) |>
+  summarise(num_significant_hits = sum(significant == "Yes")) |>
+  ggplot(aes(x = celltype, y = method, fill = num_significant_hits)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "brown1", breaks = c(0, max(transient_summary$num_significant_hits))) +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(x = "Cell type", y = "Method", fill = "Number of significant hits") +
+  coord_fixed() + theme(legend.position = "top", axis.text.x = element_text(angle = 90))
+#dev.off()
+
+transient_summary <- transient_summary %>%
+  mutate(is_DC = case_when(
+    celltype %in% c("NK", "B") ~ as.character(celltype),
+    TRUE ~ "Others"
+  ))
+
+#pdf("Transient_offtarget.#pdf")
+ggplot(transient_summary, aes(x = method, y = num_significant_hits, fill = is_DC)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Method", y = "Number of Significant Hits", fill = "Cell Type") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#dev.off()
+
+pdf("Power_transient_estimate.pdf")
+transient_result |> filter(celltype %in% c("NK", "B")) |> 
+  ggplot(aes(y = percent_changed, x = estimate, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Effect estimate", y = "Percent changed") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  facet_wrap(~ celltype) + 
+  scale_fill_manual(values = palette) + 
+  theme_cowplot()
+dev.off()
+
+```
+
+
+```{r}
+# combining runtime for power
+power_runtime_combined <- rbind(addition_result |> dplyr::select(runtime, method), deletion_result |> dplyr::select(runtime, method), transient_result |> dplyr::select(runtime, method))
+
+# runtime for power
+#pdf("Power_runtime_outliers.#pdf")
+ggplot(power_runtime_combined, aes(x = runtime, y = method, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Runtime (s)", y = "Method") +
+  scale_fill_manual(values = palette) +
+  theme_cowplot() +
+  theme(legend.position = "none")
+#dev.off()
+
+##pdf("Power_runtime.##pdf")
+ggplot(power_runtime_combined, aes(x = runtime, y = method, fill = method)) +
+  geom_boxplot() +
+  labs(x = "Runtime (s)", y = "Method") +
+  scale_fill_manual(values = palette) +
+  theme_cowplot() +
+  scale_x_continuous(limits = c(0, 100)) +
+  theme(legend.position = "none")
+##dev.off()
+
+# runtime outliers (n=2)
+unique(power_runtime_combined$runtime[power_runtime_combined$runtime > 100])
+```
+
+
+
+```{r}
+#pdf("COVID_CI_celltype.#pdf", width = 10, height = 8)
+covid_result |> filter(refcat == "B") |> 
+  ggplot(aes(y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.2))) +
+  geom_point(aes(x = estimate)) +
+  geom_errorbarh(aes(y = method), height = 0, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  scale_color_manual(values = palette) + 
+  labs(y = NULL) +  facet_wrap(~ celltype) +
+  theme_cowplot() + theme(legend.position="none")
+#dev.off()
+
+# choice of reference on results
+#pdf("reference_heatmap.#pdf", width = 10, height = 10)
+covid_result |> filter(method == "dirichlet-multinomial") |> 
+  group_by(celltype, refcat) |>
+  summarise(num_significant_hits = sum(significant == "Yes")) |>
+  ggplot(aes(x = celltype, y = refcat, fill = num_significant_hits)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "brown1") +
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(x = "Cell type", y = "Reference cell type") +
+  theme(legend.position = "none")
+#dev.off()
+```
+
+
+```{r}
+pdf("Downsample_CI_celltype.pdf", width = 10, height = 10)
+downsample_result |> 
+  dplyr::filter(celltype %in% c("Secretory", "Ciliated")) |> 
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method, alpha = ifelse(significant == "Yes", 1, 0.7))) +
+  geom_errorbarh(position = position_jitter(height = 0.2), height = 0.2, size = 0.5) + 
+  geom_vline(xintercept = 0, linetype = "longdash") +
+  facet_wrap(~ celltype + sample_size, ncol = 3) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position="none")
+dev.off()
+```
+
+aggregated CI
+```{r}
+library(metafor)
+fp_result$se <- (fp_result$upper_CI - fp_result$lower_CI) / (2*qnorm(0.975))
+method_list <- levels(fp_result$method)
+fp_aggregated_CI <- list()
+
+for (method in method_list) {
+  subset_data <- fp_result[fp_result$method == method, ]
+  model <- metafor::rma(yi = estimate, sei = se, data = subset_data)
+    
+  # Create a data frame with cell type and model summary
+  summary_df <- data.frame(
+    estimate = model$beta[1],
+    lower_CI = model$ci.lb,
+    upper_CI = model$ci.ub,
+    method = method
+  )
+  
+  # Append the summary data frame to the list
+  fp_aggregated_CI[[length(fp_aggregated_CI) + 1]] <- summary_df
+}
+
+# Combine the list of data frames into a single data frame
+fp_aggregated_CI_df <- do.call(rbind, fp_aggregated_CI)
+
+#pdf("FP_aggregatedCI.#pdf")
+fp_aggregated_CI_df |> 
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+#dev.off()
+```
+
+
+```{r}
+method_list <- levels(deletion_result$method)
+percent_deleted_list <- c(10, 30, 50)
+deletion_aggregated_CI <- list()
+
+for (method in method_list) {
+  for (percent_deleted in percent_deleted_list){
+      subset_data <- deletion_result[deletion_result$method == method, ]
+      subset_data <- subset_data[subset_data$percent_deleted == percent_deleted, ]
+      model <- metafor::rma(yi = estimate, sei = rep(1, nrow(subset_data)), data = subset_data, 
+                        subset = celltype=="Mono")
+    
+      # Create a data frame with cell type and model summary
+      summary_df <- data.frame(
+        estimate = model$beta[1],
+        lower_CI = model$ci.lb,
+        upper_CI = model$ci.ub,
+        method = method,
+        percent_deleted = percent_deleted
+      )
+      
+      # Append the summary data frame to the list
+      deletion_aggregated_CI[[length(deletion_aggregated_CI) + 1]] <- summary_df
+  }
+}
+
+# Combine the list of data frames into a single data frame
+deletion_aggregated_CI_df <- do.call(rbind, deletion_aggregated_CI)
+
+pdf("Deletion_aggregatedCI_10.pdf")
+deletion_aggregated_CI_df |> filter(percent_deleted == "10") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = -0.1, linetype = "longdash") +
+  geom_vline(xintercept = 0) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none") 
+dev.off()
+
+pdf("Deletion_aggregatedCI_30.pdf")
+deletion_aggregated_CI_df |> filter(percent_deleted == "30") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0) + 
+  geom_vline(xintercept = -0.3, linetype = "longdash") +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+dev.off()
+
+pdf("Deletion_aggregatedCI_50.pdf")
+deletion_aggregated_CI_df |> filter(percent_deleted == "50") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = -0.5, linetype = "longdash") +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+dev.off()
+```
+
+
+```{r}
+method_list <- levels(addition_result$method)
+percent_added_list <- c(50, 75, 100)
+addition_aggregated_CI <- list()
+
+for (method in method_list) {
+  for (percent_added in percent_added_list){
+      subset_data <- addition_result[addition_result$method == method, ]
+      subset_data <- subset_data[subset_data$percent_added == percent_added, ]
+      model <- metafor::rma(yi = estimate, sei = rep(1, nrow(subset_data)), data = subset_data, 
+                        subset = celltype=="DC")
+    
+      # Create a data frame with cell type and model summary
+      summary_df <- data.frame(
+        estimate = model$beta[1],
+        lower_CI = model$ci.lb,
+        upper_CI = model$ci.ub,
+        method = method,
+        percent_added = percent_added
+      )
+      
+      # Append the summary data frame to the list
+      addition_aggregated_CI[[length(addition_aggregated_CI) + 1]] <- summary_df
+  }
+}
+
+# Combine the list of data frames into a single data frame
+addition_aggregated_CI_df <- do.call(rbind, addition_aggregated_CI)
+
+pdf("Addition_aggregatedCI_50.pdf")
+addition_aggregated_CI_df |> filter(percent_added == "50") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0.5, linetype = "longdash") +
+  geom_vline(xintercept = 0) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+dev.off()
+
+pdf("Addition_aggregatedCI_75.pdf")
+addition_aggregated_CI_df |> filter(percent_added == "75") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 0.75, linetype = "longdash") +
+  geom_vline(xintercept = 0) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none") 
+dev.off()
+
+pdf("Addition_aggregatedCI_100.pdf")
+addition_aggregated_CI_df |> filter(percent_added == "100") |>
+  ggplot(aes(x = estimate, y = method, xmin = lower_CI, xmax = upper_CI, color = method)) +
+  geom_errorbarh(height = 0.1, size = 0.5) + 
+  geom_vline(xintercept = 1, linetype = "longdash") +
+  geom_vline(xintercept = 0) +
+  scale_color_manual(values = palette) + 
+  theme_cowplot() + theme(legend.position = "none")
+dev.off()
+```

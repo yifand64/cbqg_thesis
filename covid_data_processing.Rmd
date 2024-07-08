@@ -1,0 +1,116 @@
+---
+title: "covid_data_processing"
+author: "Yifan Duan"
+date: "2024-03-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(data.table)
+library(Matrix)
+library(zCompositions)
+
+gene_expression <- fread("data/NasalSwab_RawCounts.csv.gz")
+metadata <- fread("data/NasalSwab_MetaData.txt")
+# removing the class definition (e.g. chr, group, numeric for column)
+metadata <- metadata[-1,]
+
+test <- gene_expression[1:10, 1:10]
+head(metadata)
+
+
+metadata$Peak_Respiratory_Support_WHO_Score <- as.numeric(metadata$Peak_Respiratory_Support_WHO_Score)
+metadata$donor_id <- as.factor(metadata$donor_id)
+metadata$Coarse_Cell_Annotations <- as.factor(metadata$Coarse_Cell_Annotations)
+
+table(metadata$Peak_Respiratory_Support_WHO_Score)
+table(metadata$donor_id)
+
+metadata <- metadata %>%
+  separate(col = donor_id, into = c("Cohort", "Participant"), sep = "_", remove = FALSE)
+
+metadata$Sample <- metadata$donor_id
+
+# use control 0 WHO vs COVID 6-8 WHO sample
+metadata <- metadata |> filter(
+    (Cohort == "Control" & Peak_Respiratory_Support_WHO_Score == 0) | 
+    (Cohort == "COVID19" & Peak_Respiratory_Support_WHO_Score %in% c(6, 7, 8)))
+
+table(metadata$Cohort)
+
+selected_samples <- metadata$NAME
+gene_expression_subset <- gene_expression[, .SD, .SDcols = intersect(selected_samples, colnames(gene_expression))]
+gene_expression_subset <- colSums(gene_expression_subset)
+gene_expression_subset <- as.data.frame(gene_expression_subset)
+
+gene_expression_subset$cell_type <- as.factor(metadata$Coarse_Cell_Annotations)
+gene_expression_subset$cohort <- as.factor(metadata$Cohort)
+gene_expression_subset$sample <- as.factor(metadata$Sample)
+# for metadata, extract Cell_Type, Cohort, donor_id
+colnames(gene_expression_subset) <- c("count", "celltype", "condition", "sample")
+
+covid_wide <- gene_expression_subset |>
+  dplyr::group_by(condition, sample, celltype) |>
+  dplyr::summarise(n = dplyr::n(), .groups = "drop") |> 
+  pivot_wider(names_from = celltype, values_from = n) |>
+  mutate_all(~replace_na(., 0))
+
+
+covid_wide_subset <- covid_wide |> dplyr::select(-c(condition, sample))
+yr <- multRepl(covid_wide_subset, label = 0)
+yr <- bind_cols(covid_wide[, c("condition", "sample")], covid_wide_subset %>% multRepl(label = 0))
+
+write.csv(yr, "covid_wide.csv", row.names = F)
+```
+
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(data.table)
+covid_df_wide <- fread("covid_wide.csv")
+covid_df <- covid_df_wide |> 
+  pivot_longer(cols = -c(condition, sample), names_to = "celltype", values_to = "count")
+
+covid_df$condition <- as.factor(covid_df$condition)
+covid_df$sample <- as.factor(covid_df$sample)
+covid_df$celltype <- as.factor(covid_df$celltype)
+
+covid_df_wide <- as.data.frame(covid_df) |> 
+  pivot_wider(names_from = celltype, values_from = count)
+
+```
+
+
+```{r}
+#get_ttest_ci(covid_df)
+#get_wilcoxon_ci(covid_df)
+
+# use refcat = B as default
+covid_result <- list()
+covid_celltype <- unique(covid_df$celltype)
+
+for (celltype in covid_celltype) {
+  result <- apply_functions(covid_df, refcat = celltype)
+  result$refcat <- celltype
+  covid_result[[celltype]] <- result
+}
+
+# Combine the results into one dataframe
+covid_result_df <- do.call(rbind, covid_result)
+
+
+covid_result_df$significant <- as.factor(ifelse(covid_result_df$lower_CI < 0 & covid_result_df$upper_CI > 0, "No", "Yes"))
+
+write.csv(covid_result_df, file = "benchmark/covid_result.csv", row.names = F)
+```
+
+

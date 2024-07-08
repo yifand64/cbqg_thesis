@@ -1,0 +1,51 @@
+---
+title: "immune_data_cleanup"
+author: "Yifan Duan"
+date: "2024-01-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(data.table)
+library(Matrix)
+
+gene_expression <- fread("data/scp_gex_matrix_raw.csv.gz")
+
+metadata <- fread("data/scp_meta_updated.txt")
+metadata <- metadata |> filter(Cohort == "Control" & biosample_id == "CD45")
+
+test <- gene_expression[1:10, 1:10]
+selected_samples <- metadata$NAME
+
+gene_expression_subset <- gene_expression[, .SD, .SDcols = intersect(selected_samples, colnames(gene_expression))]
+gene_expression_subset <- colSums(gene_expression_subset)
+gene_expression_subset <- as.data.frame(gene_expression_subset)
+
+gene_expression_subset$cell_type <- as.factor(metadata$Cell_Type)
+gene_expression_subset$cohort <- as.factor(metadata$Cohort)
+gene_expression_subset$donor_id <- as.factor(metadata$donor_id)
+# for metadata, extract Cell_Type, Cohort, donor_id
+colnames(gene_expression_subset) <- c("count", "celltype", "condition", "sample")
+
+immune_df_ctrl <- gene_expression_subset
+
+# dont need this one, as this one still had individual barcodes
+#write.csv(immune_df_ctrl, "immune_df_ctrl.csv")
+```
+
+
+```{r}
+immune_df_ctrl_wide <- immune_df_ctrl |>
+  dplyr::group_by(condition, sample, celltype) |>
+  dplyr::summarise(n = dplyr::n(), .groups = "drop") |> 
+  pivot_wider(names_from = celltype, values_from = n)
+
+write.csv(immune_df_ctrl_wide, "immune_df_ctrl_wide.csv", row.names = F)
+```
+

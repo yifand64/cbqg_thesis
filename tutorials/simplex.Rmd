@@ -1,0 +1,118 @@
+---
+title: "Sample points on the 3-simplex"
+output: pdf_document
+---
+
+
+```{r load_libraries, echo=F, message=F, warning=F}
+
+library(cowplot)
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(ggtern)
+```
+
+
+### Initial manual example
+### One cell-type increases. Move outward from the center of the simplex.
+```{r manual, echo=F, message=F, warning=F}
+
+
+
+y  <- data.frame(
+  TypeA = c( 0.35, 0.33, 0.3, 0.25, 0.2, 0.15, 0.125, 0.1),
+  TypeB = c( 0.3, 0.33, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8),
+  TypeC = c( 0.35, 0.33, 0.3, 0.25, 0.2, 0.15, 0.125, 0.1)
+)
+pheatmap(y, cluster_rows = F, cluster_cols = F, filename = "Linear_manual_heatmap.pdf", width = 4, height=12)
+ggsave(ggtern(data=y, aes(x=TypeA,y=TypeB, z=TypeC)) + geom_point(), filename = "Linear_manual_Ternary.pdf")
+
+```
+
+```{r uniform, echo=F, message=F, warning=F}
+# uniform https://cs.stackexchange.com/questions/3227/uniform-sampling-from-a-simplex
+n = 100
+dimension = 3 # number of cell types , i.e the dimension of the simplex, shorthand: the 3-simplex
+sample_uniform_simplex = function(dimension){diff(sort(c(0, runif(dimension-1), 1)))}
+y = as.data.frame(do.call(rbind, lapply(rep(dimension,n), sample_uniform_simplex)))
+colnames(y) = paste0("Type", c("A", "B", "C"))
+ggsave(ggtern(data=y, aes(x=TypeA,y=TypeB, z=TypeC)) + geom_point(), filename = "Uniform_Ternary.pdf")
+
+
+# move in a line on the hypercube
+x0 = c(1/3, 1/3, 1/3) #start point
+xp = c(2/5, 2/5, 1/5) #c(0, 0, 1) #perturbed point
+ith_pt = function(i){x0 + i*(xp - x0) / n}
+y = as.data.frame(do.call(rbind, lapply(1:n, ith_pt)))
+colnames(y) = paste0("Type", c("A", "B", "C"))
+pheatmap(y, cluster_rows = F, cluster_cols = F, filename = "Line_heatmap.pdf", width = 4, height=12)
+ggsave(ggtern(data=y, aes(x=TypeA,y=TypeB, z=TypeC)) + geom_point(), filename = "Line_Ternary.pdf")
+
+
+# drop down a dimension to move in a line on the 3-simplex
+dimension = 2
+x0 = c(1/3, 2/3) #start point
+xp = c(2/5, 4/5) #perturbed point
+yspx = as.data.frame(do.call(rbind, lapply(1:n, ith_pt)))
+y = data.frame(t(apply(yspx, 1, function(x) diff(sort(c(0, unlist(x), 1))))))
+colnames(y) = paste0("Type", c("A", "B", "C"))
+pheatmap(y, cluster_rows = F, cluster_cols = F, filename = "Line_Simplex_heatmap.pdf", width = 4, height=12)
+ggsave(ggtern(data=y, aes(x=TypeA,y=TypeB, z=TypeC)) + geom_point(), filename = "Line_Simplex_Ternary.pdf")
+
+```
+
+
+```{r dm_counts}
+# Use DM to get count data
+xcontrol = c(1/3, 1/3, 1/3)
+xtreatment = c(2/5, 2/5, 1/5) 
+nreps = 10 # replicates / mice / patients per condition
+
+# model variation in the total number of cells with a NB
+ncells_control = rnbinom(nreps, size = 1000, prob = 0.45)
+ncells_treatment = rnbinom(nreps, size = 1000, prob = 0.45)
+
+#theta is a noise parameter, in this case it would be deviations from the true proportions
+theta = 0.001
+# model counts by sampling from dirichlet multinomial
+counts_control = as.data.frame(do.call(rbind, 
+                   lapply(ncells_control, function(i) dirmult::simPop(J=1, n=i, pi=xcontrol, theta=theta)$data)))
+counts_treatment = as.data.frame(do.call(rbind, 
+                   lapply(ncells_treatment, function(i) dirmult::simPop(J=1, n=i, pi=xtreatment, theta=theta)$data)))
+y = rbind(counts_control, counts_treatment)
+colnames(y) = paste0("Type", c("A", "B", "C"))
+y$condition = rep(c("Control", "Treatment"), each=nreps)
+```
+
+```{r}
+y$sample <- seq(1:length(y$condition))
+
+
+pdf("simu_heatmap.pdf")
+pheatmap(y |> dplyr::select(-c(condition, sample)), cluster_rows = F, cluster_cols = F)
+dev.off()
+
+pdf("simu_ternary.pdf")
+ggtern(data=y, aes(x=TypeA,y=TypeB, z=TypeC, color = condition)) + geom_point() + theme(legend.position = "top")
+dev.off()
+
+count_df_wide <- y
+count_df <- count_df_wide |> 
+  pivot_longer(cols = -c(condition, sample), names_to = "celltype", values_to = "count")
+
+count_df <- count_df %>%
+  group_by(sample) %>%
+  mutate(prop = count / sum(count))
+
+pdf("simu_proportion.pdf")
+ggplot(count_df, aes(x = as.factor(sample), y = prop, fill = celltype)) +
+  geom_bar(stat = "identity") +
+  theme_cowplot() + 
+  theme(legend.position = "top", axis.text.x = element_text(angle = 90, hjust = 1)) +
+  guides(fill = guide_legend(title = NULL, nrow = 1))
+dev.off()
+```
+
+
+
