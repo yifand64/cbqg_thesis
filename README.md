@@ -1,2 +1,2 @@
-# cbqg_thesis
- code for cbqg thesis
+# CBQG Thesis
+This is the code repository for my master's thesis. 
