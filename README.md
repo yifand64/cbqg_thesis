@@ -1,7 +1,7 @@
 
 # CBQG Thesis
 
-This is the code repository for my master's thesis. 
+Compositional analysis is one of the downstream analyses for scRNA-seq, it allows us to compare the composition of cellular heterogeneity between different conditions. However, the compositionality of the negative correlation and the sum-constrained makes most of the data assumption for univariate statistical tests invalid. Recently, there have been several compositional data analysis methods developed that claim to model the compositional data more accurately. Here, we benchmark 7 common methods for compositional data analysis and compute their false positive rate, statistical power, and their performance with low sample size. We found that the traditional methods had better performance in statistical power compared to Bayesian-based methods while they had similar performance in terms of false positive rate.
 
 ## Data Availability
 
